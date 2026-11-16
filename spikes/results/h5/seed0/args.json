@@ -1,0 +1,10 @@
+{
+ "csv_dir": "/private/tmp/claude-502/-Users-angandotra-base-ml-general-NID/c1c7eb8d-74f8-4eb6-a56e-5133dda6ad8c/scratchpad/dl_improved/csv",
+ "out": "results/h5/seed0",
+ "seed": 0,
+ "epochs": 20,
+ "cand": 200000,
+ "xgb_benign": 150000,
+ "attack_cap": 10000,
+ "test_cap": 50000
+}

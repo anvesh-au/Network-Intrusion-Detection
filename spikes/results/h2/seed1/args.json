@@ -1,0 +1,12 @@
+{
+ "csv_dir": "/private/tmp/claude-502/-Users-angandotra-base-ml-general-NID/c1c7eb8d-74f8-4eb6-a56e-5133dda6ad8c/scratchpad/dl_improved/csv",
+ "out": "spikes/results/h2/seed1",
+ "seed": 1,
+ "k": 10,
+ "benign_train": 150000,
+ "attack_cap": 10000,
+ "benign_test": 50000,
+ "known_test": 2000,
+ "steps": 2000,
+ "families": ""
+}
