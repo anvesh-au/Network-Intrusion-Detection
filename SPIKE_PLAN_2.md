@@ -18,6 +18,16 @@ Follows [`SPIKE_PLAN.md`](SPIKE_PLAN.md) (H1–H3, results in [`experiments.md`]
 
 ## (a) Index update logic
 
+### Decisions made (2026-11-16)
+
+- **Training block:** Mon–Wed (24 capture hours). Known at the start: brute force, DoS, heartbleed.
+- **Replay:** Thu and Fri in **1-hour blocks**, test-then-train (score the block, then update). New in replay: web, infiltration, portscan (a variant), bot, ddos.
+- **Analyst budget:** B = 100 and 500 labels per block, **representatives only** (one label = one exemplar, no label propagation to the rest of the cluster).
+- **No audits:** the threshold is set once on held-out training benign and stays fixed.
+- **Caps:** 2,000 exemplars per attack class (k-center within the class); benign index 100k entries. A larger index with approximate search is parked in [`SPIKE_PLAN_3.md`](SPIKE_PLAN_3.md).
+- **First pass:** A0, A1, A2 with B1, B2. A3–A5 later.
+- **Every result reports the full confusion matrix** (true class × predicted: benign, each family, unknown).
+
 ### Common test protocol (one harness for every approach)
 
 ```mermaid
@@ -50,6 +60,16 @@ flowchart LR
 | **A3** | Daily batch, sub-prototypes | When recent members of a class sit far from its exemplars, open a new sub-prototype rather than moving the old one. | Prototype count creeps up. |
 | **A4** | Continuous, tiered | Within the day, flagged flows go to a *provisional* tier (cluster live, quarantined, expires unless confirmed). The analyst confirms at end of day, and confirmed flows move into the core tier. | Provisional tier can steer decisions wrongly if used for naming. |
 | **A5** | Continuous, auto write-back | The old repo's approach: confident predictions are added automatically, with no analyst. | Self-reinforcing mistakes. Included as a negative baseline. |
+
+**A3**
+```mermaid
+flowchart LR
+  L[Analyst label: class C] --> Q{Within radius of a<br/>sub-prototype of C?}
+  Q -->|yes| M[Merge: update centroid,<br/>count, last-seen]
+  Q -->|no| N[Open a new sub-prototype]
+  N --> K{Over the class cap?}
+  K -->|yes| R[Merge the two closest]
+```
 
 **Benign side, compared under the same harness:**
 
