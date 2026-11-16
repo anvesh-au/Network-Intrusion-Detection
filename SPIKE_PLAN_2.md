@@ -1,67 +1,62 @@
 # Spike plan 2: index update logic and the benign gate
 
-**Status: draft for discussion. Nothing here is built or run.**
+**Status (2026-11-16): the first pass is done (A0–A3b, B1–B4, H5/H5b). Results and full confusion matrices: [`experiments.md`](experiments.md) (H5, H5b, H6 entries) and `spikes/results/h6/REPORT.md`.**
 
-Follows [`SPIKE_PLAN.md`](SPIKE_PLAN.md) (H1–H3, results in [`experiments.md`](experiments.md)). Two open questions:
+Follows [`SPIKE_PLAN.md`](SPIKE_PLAN.md). Two questions:
 
-- **(a)** How should the index change over time, daily and continuously, for benign and for attacks?
+- **(a)** How should the index change over time for benign and for attacks?
 - **(b)** Should a one-class benign gate (VAE or similar) sit in front of the attack index?
 
-## What H1–H3 say about the design
+## Summary of findings
 
-| Finding | Consequence |
+| Question | Answer so far |
 |---|---|
-| H3: a 20k benign index catches 68% of attacks, the full 512k catches 86%. Random selection beats k-center. | Benign coverage is the weak point. Fixed benign indexes lose attacks. |
-| H2: 5 inserted examples name a new class about as well as retraining. | Attack side: insertion works. The question is how to *choose and age* examples. |
-| H2: first-in-time examples cover one variant. | Variants are the drift signal. Use them to test attack-signature drift. |
-| H1/H2: the learned encoder never beat raw features. | Keep raw features until the raw-byte stage. |
+| Does updating the index from analyst labels work? | **Yes.** From a frozen index (names nothing), labels lift ddos to 83% named and portscan to 24–82%. Known attacks are not damaged; false alarms do not rise. |
+| Does age-based deletion work (A2)? | **No.** DoS naming on the held-out known-attack check falls from 0.89 to 0.00–0.09. |
+| Do sub-prototypes (A3b) work? | **Partly.** No forgetting, near-zero misnaming at a tight radius, and 250–340 attack entries instead of 4–6k. But lower naming recall. The radius is the trade-off; no setting wins on both. |
+| Best benign rule? | **B3** (density-aware sample): 0.9% benign false alarms vs. 1.2% for random (B1). Recency weighting (B2) gives nothing. |
+| Does a VAE gate in front of the attack index work (B4)? | **No.** It passes known attacks as normal (brute force 99% → 0% named; web 0% flagged), and about 1,000 attack flows per run leak into its training pool. It is 200× smaller and 5× faster. |
+| Does a benign gate beat the kNN benign index (H5)? | **No.** VAE 0.58, AE 0.47 vs. kNN 0.68 (20k) and 0.86 (full) attack recall at 1% false alarms. XGBoost: all known attacks, 47% of unseen ones. |
+| Still unsolved | Bot (never flagged), infiltration (36 flows, almost never named), threshold drift (2.3–2.7% false alarms in the busiest hours). |
 
 ## (a) Index update logic
 
-### Decisions made (2026-11-16)
+### Decisions (2026-11-16)
 
-- **Training block:** Mon–Wed (24 capture hours). Known at the start: brute force, DoS, heartbleed.
-- **Replay:** Thu and Fri in **1-hour blocks**, test-then-train (score the block, then update). New in replay: web, infiltration, portscan (a variant), bot, ddos.
-- **Analyst budget:** B = 100 and 500 labels per block, **representatives only** (one label = one exemplar, no label propagation to the rest of the cluster).
-- **No audits:** the threshold is set once on held-out training benign and stays fixed.
-- **Caps:** 2,000 exemplars per attack class (k-center within the class); benign index 100k entries. A larger index with approximate search is parked in [`SPIKE_PLAN_3.md`](SPIKE_PLAN_3.md).
-- **First pass:** A0, A1, A2 with B1, B2. A3–A5 later.
+- **Training block:** Mon–Wed (24 capture hours). Known at the start: brute force, DoS, heartbleed (first 60% in time of each; the last 40% is a held-out probe scored every block).
+- **Replay:** Thu and Fri in **1-hour blocks** (20 blocks), test-then-train. The 8-hour blocks first proposed were dropped: they give only 8 replay blocks and most attacks fall in a single block. New in replay: web, infiltration, portscan (a variant), bot, ddos.
+- **Analyst budget:** B = 100 and 500 labels per block, **representatives only** (one label = one exemplar; no label propagation).
+- **No audits:** one fixed threshold set on held-out training benign.
+- **Caps:** 2,000 exemplars per class (k-center) for A1/A2; 100 sub-prototypes per class for A3/A3b; benign index 100k entries. A larger index with approximate search is parked in [`SPIKE_PLAN_3.md`](SPIKE_PLAN_3.md).
 - **Every result reports the full confusion matrix** (true class × predicted: benign, each family, unknown).
 
-### Common test protocol (one harness for every approach)
+### Test protocol
 
 ```mermaid
 flowchart LR
-  D[Day N flows, in time order] --> S[Score with index N]
-  S --> F[Flagged: unknown / low-confidence]
-  F --> C[Cluster flagged flows]
-  C --> A[Simulated analyst<br/>labels up to B flows/day<br/>using ground truth]
-  A --> U[Update rule<br/>benign + attack]
-  U --> I[Index N+1]
+  D[Block N flows, in time order] --> S[Score with index N-1]
+  S --> F[Flagged flows]
+  F --> C[k-means into B clusters]
+  C --> A[Oracle analyst labels<br/>the B representatives]
+  A --> U[Update attack + benign side]
+  U --> I[Index N]
 ```
 
-- **Time unit:** CIC-IDS2017 has only 5 days. Cut it into 8-hour blocks (about 15 "days") so there are enough update steps. State this in every result.
-- **Drift proxy:** attack families stay merged (one label each). **Variants inside a family arrive in time order** (Slowloris → Hulk, FTP → SSH-Patator, …). That is the signature evolution the index must absorb.
-- **Analyst budget B:** labels per day, e.g. 10 / 50 / 200. The oracle labels cluster representatives, not random flows.
-- **Metrics, per day:**
-  - benign false-alarm rate
-  - recall and *naming* recall per family
-  - the forgetting matrix (the old repo's `R[i][j]`: score on day j after update i)
-  - labels used and index size
-  - contamination: attacks that entered the benign pool
+- **Drift proxy:** attack families stay merged (one label each). The dataset's own timeline provides new families and variants over time.
+- **Metrics per block:** benign false alarms; share flagged and share named per family; misnamed attack flows; labels used; index size; attack flows that entered the benign pool; held-out known-attack probe (forgetting).
 
-### Approaches to compare
+### Attack side
 
-| ID | Approach | Idea | Main risk |
+| ID | Approach | Status | Result |
 |---|---|---|---|
-| **A0** | Frozen | No update. Reference. | – |
-| **A1** | Daily batch, append-only | Each day, add labelled examples. Cap per class using within-class k-center. | Grows; old variants dominate. |
-| **A2** | Daily batch, aged | A1 plus recency weights. Exemplars with no hits for N days are retired. Keep a small anchor set per class so nothing is forgotten completely. | Retiring a rare-but-returning attack. |
-| **A3** | Daily batch, sub-prototypes | When recent members of a class sit far from its exemplars, open a new sub-prototype rather than moving the old one. | Prototype count creeps up. |
-| **A4** | Continuous, tiered | Within the day, flagged flows go to a *provisional* tier (cluster live, quarantined, expires unless confirmed). The analyst confirms at end of day, and confirmed flows move into the core tier. | Provisional tier can steer decisions wrongly if used for naming. |
-| **A5** | Continuous, auto write-back | The old repo's approach: confident predictions are added automatically, with no analyst. | Self-reinforcing mistakes. Included as a negative baseline. |
+| **A0** | Frozen | Run | Flags 87–100% of new families but names none. DDoS is named DoS 42% of the time. |
+| **A1** | Append-only, ≤2,000 exemplars per class (k-center) | Run | Best naming recall (portscan 0.82 at B = 500), but 6–8% of attack flows misnamed. |
+| **A2** | A1 + retire exemplars with no hit for 3 blocks (20 anchors kept) | Run | **Forgets DoS** (0.89 → 0.00). No gain elsewhere. |
+| **A3** | Sub-prototypes, kNN vote + radius check | Run, **failed** | The vote lets benign neighbours outvote few centroids; wider radii made it worse. |
+| **A3b** | Sub-prototypes, nearest prototype inside its radius and nearer than the nearest benign entry | Run | See summary. Designed after A3 failed, so numbers are optimistic. |
+| **A4** | Continuous, tiered (provisional → confirmed) | Not run | – |
+| **A5** | Continuous auto write-back, no analyst | Not run | – |
 
-**A3**
 ```mermaid
 flowchart LR
   L[Analyst label: class C] --> Q{Within radius of a<br/>sub-prototype of C?}
@@ -71,16 +66,16 @@ flowchart LR
   K -->|yes| R[Merge the two closest]
 ```
 
-**Benign side, compared under the same harness:**
+### Benign side
 
-| ID | Rule |
-|---|---|
-| B1 | Pool of all confirmed benign so far; random sample to the size cap (H3 says random ≥ k-center). |
-| B2 | Recency-weighted reservoir: newer days over-represented. |
-| B3 | Density-aware centroids (k-means) over the pool, rebuilt daily. |
-| B4 | A parametric model fine-tuned daily with replay (see (b)). |
+| ID | Rule | Status | Result |
+|---|---|---|---|
+| B1 | Random 100k sample of the confirmed/assumed-benign pool | Run | 1.2% benign false alarms |
+| B2 | Recency-weighted sample (half-life 6 blocks) | Run | Same as B1 |
+| **B3** | Density-aware: k-means (2,000 clusters), real flows drawn with weight ∝ size^-0.5 | Run | **0.9%**; lower in almost every block |
+| B4 | VAE gate, fine-tuned each block; no benign index | Run | See (b). Fails as layer 1 |
 
-**Pool rule:** only analyst-confirmed benign, plus a sampled share of unflagged flows labelled "assumed benign". Test the effect of the assumed share, because it is the contamination risk.
+**Pool rule:** confirmed benign from the analyst, plus 3,000 unflagged flows per block as "assumed benign". Contamination (attack flows that entered the pool): 74–105 per run for B1–B3; about 1,000 for B4.
 
 ## (b) VAE / dual-model approach
 
@@ -94,39 +89,28 @@ flowchart LR
   R -->|labelled attacks| A
 ```
 
-**H5: does a gate beat the benign kNN index?** Reuse the H3 split (Mon/Tue train, Wed–Fri test) and compare:
+- **H5 / H5b (done):** the gates compared were the kNN benign index, a VAE, an AE, and XGBoost benign-vs-rest. Known and unseen attacks scored together under one threshold: XGBoost catches 100% of known and 47% of unseen; the full kNN index catches 85–86% of both; the AE/VAE are worse than the 20k kNN index. Bot is missed by all.
+- **B4 in the replay (done):** the VAE passes brute force and DoS probe flows (0% and 6–7% named) and web attacks (0% flagged), so layer 2 never sees them.
+- **Not tested:** routing gate-passed flows through the attack index too, and keeping gate-passed flows out of the VAE's training pool. Deep SVDD, outlier exposure and Isolation Forest are dropped.
 
-| Gate | Notes |
-|---|---|
-| kNN benign index (20k / full) | H3 numbers: baseline. |
-| VAE / autoencoder, benign only | Reconstruction error as the score. |
-| XGBoost benign-vs-rest | Supervised gate. H1 predicts it misses unseen families. |
-
-Deep SVDD, outlier exposure and Isolation Forest are dropped for now.
-
-**Metrics:**
-- Attack recall per family at 1% benign false alarms on Wed–Fri, against the H3 table.
-- Share of traffic passed (this is how much layer 2 saves).
-- End-to-end: gate → kNN attack index, with the same families held out.
-
-**Expected trouble:** bot looks like benign in these features, so it may pass any gate. If it does, that is a feature problem (bytes or host context), not a gate problem. Gate threshold and attacks near the benign boundary are the same trade-off as H3, and the gate may not be better.
-
-## What to reuse from the old repo (`NID/Exoeriment-1`)
+## What was reused from the old repo (`NID/Exoeriment-1`)
 
 I read `index.py`, `lifecycle.py`, the structure of `continual.py` and `experiments.md` on `exp5-continual-learning`. For `exp-2`, `exp3` and `exp4` I looked only at the commit titles, not the diffs; `exp5` includes their work.
 
-| Old repo | Verdict for this project |
+| Old repo | Used? |
 |---|---|
-| `index.py`: PINNED vs WRITEBACK source tag, per-row timestamp, TTL eviction, cap by oldest, rebuild on delete (Flat FAISS can't remove) | **Reuse the data model.** Pinned = confirmed core, write-back = provisional tier. Wall-clock TTL becomes day-index aging. |
-| `index.py`: automatic write-back of confident attack predictions | **Don't reuse as is.** No analyst, and errors reinforce themselves (A5 tests it). |
-| `continual.py`: replay buffer tagged with session, append-only label space, forgetting matrix, per-session benign false alarm rate | **Reuse the evaluation ideas** for the harness above. |
-| `lifecycle.py`: MLflow staging → production, `promote_if_better` | **Not needed for now** (no MLflow). The shadow → live idea stays in C9 as a plain design note. |
-| Closed-set, random-ish sessions, learned encoder | **Don't reuse.** Our results: the learned encoder never beat raw features, and its kNN prior added nothing. |
-| EXP-01–04 lessons | Correct imbalance once, not twice; dedupe before splitting; tune one benign offset on held-out data; rare classes (36 rows) can't support a test. |
+| `index.py`: PINNED vs WRITEBACK tag, timestamps, TTL eviction, rebuild on delete | Rebuild-on-delete is used (FAISS Flat cannot delete). TTL eviction is **not**: A2 shows it forgets. |
+| `index.py`: automatic write-back of confident predictions | Not used. A5 (no analyst) not run. |
+| `continual.py`: replay with session tags, append-only label space, forgetting matrix, per-session benign false alarms | Ideas used in the harness (held-out probe, per-block false alarms). |
+| `lifecycle.py`: MLflow staging → production | **Not needed for now** (no MLflow). |
+| Closed-set sessions, learned encoder | Not used. The encoder never beat raw features. |
+| EXP-01–04 lessons | Used: correct imbalance once, dedupe before splitting, small classes (36 flows) can't support a test. |
 
-## Decisions for you
+## Next
 
-1. **Time unit:** is 8-hour blocks acceptable, or do you want something else?
-2. **Analyst budget:** which values of B (labels per day) to sweep?
-3. **Run order:** (a) harness first, with the benign gate deferred, or H5 first?
-4. **Approaches:** drop or add any of A0–A5 and B1–B4?
+1. **Threshold re-calibration** over time without audits (the busiest hours reach 2–3% false alarms).
+2. **Per-prototype radii** from each prototype's own spread, and medoids instead of means (A3c); label propagation within clusters.
+3. **Layer-1 rework:** gate-passed flows still reach the attack index; keep them out of the VAE's pool.
+4. **Why infiltration is almost never named:** in the first look (seed 0), labels were given but later flows sit closer to DoS exemplars than to the earlier infiltration flows. See the H6 follow-up in `experiments.md`.
+5. **A4 / A5** (continuous variants), if the daily-only story is not enough.
+6. [`SPIKE_PLAN_3.md`](SPIKE_PLAN_3.md): capped flat index vs. a large index with approximate search.

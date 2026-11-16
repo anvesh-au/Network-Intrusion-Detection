@@ -2,6 +2,12 @@
 
 **Status: parked. Run after the daily-update harness ([`SPIKE_PLAN_2.md`](SPIKE_PLAN_2.md)).**
 
+## Context from the replay (H6)
+
+- The **attack side is already small**: sub-prototypes (A3b) keep about 250–340 entries. The size and latency pressure is the **benign index**.
+- The benign index tested was 100k real flows (B3). H3 says a bigger benign index catches more attacks (512k: 86%; 20k: 68%), which is why this spike matters.
+- A parametric benign model (VAE) was 200× smaller and 5× faster but hid known attacks from the attack index (B4). Approximate search is the other way to get a large benign index at low latency.
+
 ## Question
 
 Does it pay to keep a **small, capped index with exact (flat) search**, or a **very large (or uncapped) index with approximate nearest-neighbour (ANN) search**?

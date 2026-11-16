@@ -1,6 +1,21 @@
 # Experiments log
 
-One entry per experiment: **what we tried → result → why we think so → next**. Plan: [`SPIKE_PLAN.md`](SPIKE_PLAN.md).
+One entry per experiment: **what we tried → result → why we think so → next**. Plan: [`SPIKE_PLAN.md`](SPIKE_PLAN.md).  Follow-up plans: [`SPIKE_PLAN_2.md`](SPIKE_PLAN_2.md), [`SPIKE_PLAN_3.md`](SPIKE_PLAN_3.md) (parked). Design: [`ARCHITECTURE.md`](ARCHITECTURE.md).
+
+| Entry | Question | One-line result |
+|---|---|---|
+| H1 | Are unseen attack families far from known data? | Yes (median AUROC 0.96); bot fails. |
+| H2 | Do a few labelled examples teach a new class without retraining? | Yes; 5 examples match retrained XGBoost. |
+| H3 | Can a bounded index cover benign? | No as stated: 20k catches 68% of attacks, full 512k catches 86%; k-center loses to random. |
+| H5 | Does a benign gate (AE/VAE/XGBoost) beat the benign kNN index? | No. |
+| H5b | The same gates with known and unseen attacks together | XGBoost: all known, 47% unseen. Full kNN: 85–86% of both. |
+| H6 (A0–A2) | Daily-update replay, frozen vs. append-only vs. ageing | Updating works; ageing forgets DoS. |
+| H6 follow-up | Why is infiltration never named? | Labels were given; later flows sit nearer DoS exemplars. |
+| H6 (A3 / A3b) | Sub-prototypes instead of ageing | No forgetting, near-zero misnaming, tiny index; lower naming recall; radius is the trade-off. |
+| H6 (B1–B4) | Benign rules with A1 and A3b | B3 (density-aware) lowers false alarms (0.9% vs. 1.2%); a VAE gate hides known attacks. |
+
+Every result from H5 onwards reports full confusion matrices (inline, or in `spikes/results/h6/REPORT.md`).
+
 
 ---
 
@@ -1306,6 +1321,798 @@ A3 (v1) at r = 1.0 and 2.0 was worse still: portscan 0.03–0.04, ddos 0.29–0.
 | bruteforce | 2773 | 18 | 2753 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 |
 | dos | 3000 | 158 | 0 | 2674 | 0 | 0 | 0 | 0 | 0 | 0 | 168 |
 | heartbleed | 4 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 0 | 0 | 3 |
+| web | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| infiltration | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| portscan | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| bot | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| ddos | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+
+</details>
+
+---
+
+## H6 · Benign rules B1–B4, with A1 and A3b  (2026-11-16, 2 seeds, corrected CIC-IDS2017)
+
+**Tried:** the H6 replay (Thu+Fri, 1-hour blocks, same settings) with four ways to represent benign traffic, each paired with the append-only attack index (A1) and the sub-prototype index (A3b, radius floor 1× τ). B = 100 and 500. Script: `spikes/h6_daily_harness.py`; comparison: `spikes/h6_compare.py` → `spikes/results/h6/h6_B_comparison.csv`.
+- **B1:** random 100k sample of the benign pool.
+- **B2:** sample weighted towards recent flows (half-life 6 blocks).
+- **B3 (my definition of "density-aware"):** k-means splits the pool into 2,000 clusters; the 100k entries are real flows drawn with each cluster's weight proportional to size^0.5, which flattens density so rare normal behaviour is better covered. The clustering is fit once; new flows join the nearest cluster.
+- **B4 (my definition of the parametric gate):** a VAE trained on benign flows and fine-tuned for one epoch each block on a pool sample. Layer 1: a flow with reconstruction error below the gate threshold is benign. Layer 2: the attack index names only the flows the gate flags (A1: nearest same-class exemplar within a naming bound of 4.5; A3b: inside the prototype radius). There is no benign index. The gate threshold is re-calibrated each block on a fixed held-out benign slice, with no labels.
+
+**Result** (mean of 2 seeds; cells are share flagged / share named; "misnamed" = attack flows given the wrong attack family; "probe" = known attacks held out in time, share named, first block → last block):
+
+| attack | benign | B | benign FPR | worst block | web | infiltration | portscan | bot | ddos | misnamed | probe brute / DoS / heartbleed |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| A1 | B1 | 100 | 1.2% | 2.6% | 0.87/0.15 | 0.97/0.00 | 0.90/0.45 | 0.06/0 | 1.00/0.83 | 5.9% | 0.99 / 0.89 / 0.75 |
+| A1 | B1 | 500 | 1.2% | 2.6% | 0.87/0.17 | 0.97/0.00 | 0.95/0.82 | 0.06/0 | 1.00/0.83 | 8.1% | 0.99 / 0.90 / 0.75 |
+| A1 | B2 | 100 | 1.2% | 2.5% | 0.87/0.08 | 0.97/0.00 | 0.94/0.77 | 0.06/0 | 1.00/0.83 | 6.2% | 0.99 / 0.89 / 0.75 |
+| A1 | B2 | 500 | 1.1% | 2.4% | 0.87/0.17 | 0.97/0.00 | 0.94/0.81 | 0.06/0 | 1.00/0.83 | 8.1% | 0.99 / 0.90 / 0.75 |
+| A1 | **B3** | 100 | **0.9%** | 2.4% | 0.87/0.16 | 0.96/0.00 | 0.91/0.47 | 0.06/0 | 1.00/0.83 | 6.3% | 0.99 / 0.89 / 0.75 |
+| A1 | **B3** | 500 | **0.9%** | 2.4% | 0.87/0.17 | 0.96/0.00 | 0.93/0.81 | 0.06/0 | 1.00/0.83 | 6.2% | 0.99 / 0.89 / 0.75 |
+| A1 | B4 | 100 | 1.2% | 2.7% | **0.00**/0.00 | 0.94/0.00 | 0.92/0.78 | 0.06/0 | 0.86/0.70 | 0.0% | **0.00 / 0.06 / 0.00** |
+| A1 | B4 | 500 | 1.2% | 2.7% | **0.00**/0.00 | 0.94/0.00 | 0.91/0.79 | 0.06/0 | 0.88/0.73 | 3.0% | **0.00 / 0.07 / 0.00** |
+| A3b | B1 | 100 | 1.2% | 2.7% | 0.87/0.17 | 0.97/0.00 | 0.91/0.33 | 0.06/0 | 1.00/0.83 | 3.2% | 0.99 / 0.89 / 0.00 |
+| A3b | B1 | 500 | 1.2% | 2.7% | 0.87/0.17 | 0.97/0.03 | 0.87/0.31 | 0.06/0 | 1.00/0.83 | 3.2% | 0.99 / 0.89 / 0.00 |
+| A3b | B2 | 100 | 1.2% | 2.7% | 0.87/0.17 | 0.97/0.00 | 0.87/0.29 | 0.06/0 | 1.00/0.83 | 3.2% | 0.99 / 0.89 / 0.00 |
+| A3b | B2 | 500 | 1.1% | 2.5% | 0.87/0.17 | 0.97/0.01 | 0.87/0.31 | 0.06/0 | 1.00/0.83 | 3.2% | 0.99 / 0.89 / 0.00 |
+| A3b | **B3** | 100 | **1.0%** | 2.4% | 0.87/0.17 | 0.96/0.00 | 0.87/0.26 | 0.06/0 | 1.00/0.83 | 3.2% | 0.99 / 0.89 / 0.00 |
+| A3b | **B3** | 500 | **0.9%** | 2.3% | 0.87/0.17 | 0.97/0.03 | 0.84/0.24 | 0.06/0 | 1.00/0.83 | 3.2% | 0.99 / 0.89 / 0.00 |
+| A3b | B4 | 100 | 1.2% | 2.7% | **0.00**/0.00 | 0.94/0.00 | 0.92/0.35 | 0.06/0 | 0.86/0.70 | 3.3% | **0.00 / 0.05 / 0.00** |
+| A3b | B4 | 500 | 1.2% | 2.7% | **0.00**/0.00 | 0.94/0.03 | 0.91/0.37 | 0.06/0 | 0.88/0.73 | 3.3% | **0.00 / 0.06 / 0.00** |
+
+**Cost of the benign side** (A1 and A3b give the same):
+
+| benign rule | benign representation | time per config | attack flows that entered the benign pool, per run |
+|---|---|---|---|
+| B1, B2, B3 | 100,000 flows (8.2M floats) | about 26–29 s | 74–105 (B3: about 102–105) |
+| B4 | VAE with 40,946 parameters | about 4–6 s | **920–1,007** |
+
+**Benign false alarms per block** (A1, B = 500, mean of 2 seeds; the threshold stays fixed all replay):
+
+| block | benign flows | B1 | B2 | B3 | B4 |
+|---|---|---|---|---|---|
+| 3-11 | 6 | 0.0% | 0.0% | 0.0% | 0.0% |
+| 3-12 | 40666 | 1.1% | 1.0% | 0.7% | 1.2% |
+| 3-13 | 29237 | 0.7% | 0.6% | 0.5% | 0.7% |
+| 3-14 | 28001 | 0.7% | 0.7% | 0.6% | 0.8% |
+| 3-15 | 12276 | 0.8% | 0.9% | 0.6% | 1.0% |
+| 3-16 | 32962 | 0.8% | 0.7% | 0.6% | 0.7% |
+| 3-17 | 34800 | 1.1% | 1.1% | 0.9% | 1.1% |
+| 3-18 | 41829 | 1.7% | 1.7% | 1.5% | 1.7% |
+| 3-19 | 31459 | 0.8% | 0.7% | 0.5% | 0.8% |
+| 3-20 | 1346 | 2.0% | 2.2% | 1.6% | 2.0% |
+| 4-11 | 2 | 0.0% | 0.0% | 0.0% | 50.0% |
+| 4-12 | 33316 | 1.3% | 1.4% | 1.0% | 1.4% |
+| 4-13 | 46884 | 1.1% | 1.1% | 0.9% | 1.0% |
+| 4-14 | 35942 | 0.9% | 0.9% | 0.7% | 1.0% |
+| 4-15 | 8235 | 1.0% | 0.7% | 0.7% | 1.5% |
+| 4-16 | 27354 | 0.7% | 0.6% | 0.6% | 0.7% |
+| 4-17 | 34030 | 0.7% | 0.7% | 0.6% | 0.9% |
+| 4-18 | 36020 | 2.3% | 2.2% | 1.9% | 2.3% |
+| 4-19 | 25195 | 2.6% | 2.4% | 2.4% | 2.7% |
+| 4-20 | 865 | 2.3% | 2.3% | 1.9% | 3.1% |
+
+**Why:**
+- **B1 and B2 are the same** within noise, so recency weighting is not worth keeping.
+- **B3 lowers false alarms.** It gives 0.9% against 1.2% at the same index size, for both attack designs and both budgets, and it is lower in almost every block (e.g. 1.9% vs 2.3% in hour 4-18). Attack naming is about the same; flagged shares for portscan and infiltration move by up to 0.04 (mostly down), and A3b's portscan naming is lower (0.24–0.26 vs 0.31–0.33 for B1). Spreading the index across normal behaviour, instead of letting the dominant traffic fill it, covers rare normal flows better.
+- **All rules share the same false-alarm spikes** in the busiest hours (2.3–2.7% in the DDoS hours 4-18 and 4-19), because the threshold is fixed. Drift handling is not tested.
+- **B4 fails as layer 1.** The VAE passes web attacks entirely (0.00 flagged) and DDoS only 86–88% flagged. Known attacks never reach the attack index: brute force goes from 99% named (B1–B3) to 0%, DoS to 6–7%. About 1,000 attack flows per run were treated as "assumed benign" and added to the pool the VAE trains on (10× the other rules), so the gate also learns to accept them.
+- **What B4 does well:** it stores 40,946 parameters instead of 8.2M floats, runs in 4–6 s instead of about 27 s (no benign search), and where it flags a flow, A1 names it better: portscan 0.78 vs 0.45 and misnaming 0.0% at B = 100. The attack vote no longer competes with benign neighbours.
+- **A1 vs A3b is unchanged by the benign rule.** The differences from the A3 entry (misnaming, portscan naming, heartbleed probe) carry over.
+
+**Caveats:**
+- B3 and B4 are my own definitions; a different B3 (e.g. medoids of fewer clusters) or a larger, tuned VAE could behave differently.
+- 2 seeds; the B3 gain is 0.3 percentage points of benign FPR, consistent in all four attack-design/budget combinations but not large.
+- B4 fine-tunes for one epoch per block and re-calibrates its threshold on a fixed Mon–Wed slice.
+- A3b is at a single radius (1× τ) and the A3b design was tuned on this replay (see the A3 entry).
+
+**Next:**
+- Make B3 the default benign rule.
+- Rework the gate layout for B4: send gate-passed flows through the attack index too, and keep flows the gate passed out of the VAE's training pool. Then repeat the comparison.
+- Threshold re-calibration over time (the busiest hours push every rule to 2–3% false alarms).
+
+**Complete confusion matrices for all 16 configs** (replay, then the known-attack probe at the first and last block; true class × predicted, "unknown" = flagged but no known class; mean of 2 seeds, rounded). The remaining configs are in `spikes/results/h6/REPORT.md`.
+
+<details><summary>All 16 configs</summary>
+
+### A1_B1_B100
+
+**Replay (Thu+Fri), true class x predicted, flows:**
+
+| true \ pred | n | benign | bruteforce | dos | heartbleed | web | infiltration | portscan | bot | ddos | unknown |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| benign | 500424 | 494380 | 26 | 76 | 6 | 2 | 0 | 198 | 0 | 0 | 5736 |
+| bruteforce | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| dos | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| heartbleed | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| web | 104 | 14 | 0 | 0 | 0 | 16 | 0 | 0 | 0 | 0 | 74 |
+| infiltration | 36 | 1 | 0 | 14 | 0 | 0 | 0 | 0 | 0 | 0 | 21 |
+| portscan | 7698 | 765 | 30 | 32 | 0 | 0 | 0 | 3441 | 0 | 0 | 3430 |
+| bot | 736 | 692 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 44 |
+| ddos | 95144 | 0 | 0 | 5982 | 0 | 0 | 0 | 84 | 0 | 79251 | 9827 |
+
+**Known-attack probe (held-out last 40% of Mon-Wed attacks), first block:**
+
+| true \ pred | n | benign | bruteforce | dos | heartbleed | web | infiltration | portscan | bot | ddos | unknown |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| benign | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| bruteforce | 2773 | 18 | 2754 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 |
+| dos | 3000 | 165 | 0 | 2683 | 0 | 0 | 0 | 0 | 0 | 0 | 152 |
+| heartbleed | 4 | 0 | 0 | 0 | 3 | 0 | 0 | 0 | 0 | 0 | 1 |
+| web | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| infiltration | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| portscan | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| bot | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| ddos | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+
+**Known-attack probe, last block:**
+
+| true \ pred | n | benign | bruteforce | dos | heartbleed | web | infiltration | portscan | bot | ddos | unknown |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| benign | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| bruteforce | 2773 | 18 | 2754 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 |
+| dos | 3001 | 166 | 0 | 2683 | 0 | 0 | 0 | 0 | 0 | 0 | 152 |
+| heartbleed | 4 | 0 | 0 | 0 | 3 | 0 | 0 | 0 | 0 | 0 | 1 |
+| web | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| infiltration | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| portscan | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| bot | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| ddos | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+
+### A1_B1_B500
+
+**Replay (Thu+Fri), true class x predicted, flows:**
+
+| true \ pred | n | benign | bruteforce | dos | heartbleed | web | infiltration | portscan | bot | ddos | unknown |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| benign | 500425 | 494595 | 26 | 81 | 3 | 11 | 0 | 314 | 0 | 0 | 5395 |
+| bruteforce | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| dos | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| heartbleed | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| web | 104 | 14 | 0 | 0 | 0 | 18 | 0 | 0 | 0 | 0 | 72 |
+| infiltration | 36 | 1 | 0 | 13 | 0 | 0 | 0 | 0 | 0 | 0 | 22 |
+| portscan | 7699 | 398 | 30 | 22 | 0 | 0 | 0 | 6305 | 0 | 0 | 944 |
+| bot | 736 | 692 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 44 |
+| ddos | 95144 | 0 | 0 | 5107 | 0 | 0 | 0 | 3219 | 0 | 79144 | 7674 |
+
+**Known-attack probe (held-out last 40% of Mon-Wed attacks), first block:**
+
+| true \ pred | n | benign | bruteforce | dos | heartbleed | web | infiltration | portscan | bot | ddos | unknown |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| benign | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| bruteforce | 2773 | 18 | 2754 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 |
+| dos | 3000 | 165 | 0 | 2683 | 0 | 0 | 0 | 0 | 0 | 0 | 152 |
+| heartbleed | 4 | 0 | 0 | 0 | 3 | 0 | 0 | 0 | 0 | 0 | 1 |
+| web | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| infiltration | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| portscan | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| bot | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| ddos | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+
+**Known-attack probe, last block:**
+
+| true \ pred | n | benign | bruteforce | dos | heartbleed | web | infiltration | portscan | bot | ddos | unknown |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| benign | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| bruteforce | 2773 | 18 | 2754 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 |
+| dos | 3000 | 159 | 0 | 2685 | 0 | 0 | 0 | 0 | 0 | 0 | 156 |
+| heartbleed | 4 | 0 | 0 | 0 | 3 | 0 | 0 | 0 | 0 | 0 | 1 |
+| web | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| infiltration | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| portscan | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| bot | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| ddos | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+
+### A1_B2_B100
+
+**Replay (Thu+Fri), true class x predicted, flows:**
+
+| true \ pred | n | benign | bruteforce | dos | heartbleed | web | infiltration | portscan | bot | ddos | unknown |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| benign | 500425 | 494552 | 24 | 83 | 3 | 4 | 0 | 218 | 0 | 0 | 5541 |
+| bruteforce | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| dos | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| heartbleed | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| web | 104 | 14 | 0 | 0 | 0 | 8 | 0 | 0 | 0 | 0 | 82 |
+| infiltration | 36 | 1 | 0 | 13 | 0 | 0 | 0 | 0 | 0 | 0 | 22 |
+| portscan | 7697 | 482 | 31 | 44 | 0 | 0 | 0 | 5922 | 0 | 0 | 1218 |
+| bot | 736 | 692 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 44 |
+| ddos | 95144 | 0 | 0 | 6356 | 0 | 0 | 0 | 0 | 0 | 79243 | 9545 |
+
+**Known-attack probe (held-out last 40% of Mon-Wed attacks), first block:**
+
+| true \ pred | n | benign | bruteforce | dos | heartbleed | web | infiltration | portscan | bot | ddos | unknown |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| benign | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| bruteforce | 2773 | 18 | 2754 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 |
+| dos | 3000 | 165 | 0 | 2683 | 0 | 0 | 0 | 0 | 0 | 0 | 152 |
+| heartbleed | 4 | 0 | 0 | 0 | 3 | 0 | 0 | 0 | 0 | 0 | 1 |
+| web | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| infiltration | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| portscan | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| bot | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| ddos | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+
+**Known-attack probe, last block:**
+
+| true \ pred | n | benign | bruteforce | dos | heartbleed | web | infiltration | portscan | bot | ddos | unknown |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| benign | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| bruteforce | 2773 | 18 | 2754 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 |
+| dos | 3000 | 164 | 0 | 2684 | 0 | 0 | 0 | 0 | 0 | 0 | 152 |
+| heartbleed | 4 | 0 | 0 | 0 | 3 | 0 | 0 | 0 | 0 | 0 | 1 |
+| web | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| infiltration | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| portscan | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| bot | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| ddos | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+
+### A1_B2_B500
+
+**Replay (Thu+Fri), true class x predicted, flows:**
+
+| true \ pred | n | benign | bruteforce | dos | heartbleed | web | infiltration | portscan | bot | ddos | unknown |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| benign | 500424 | 494798 | 24 | 76 | 2 | 14 | 0 | 18 | 0 | 0 | 5492 |
+| bruteforce | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| dos | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| heartbleed | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| web | 104 | 14 | 0 | 0 | 0 | 18 | 0 | 0 | 0 | 0 | 72 |
+| infiltration | 36 | 1 | 0 | 14 | 0 | 0 | 0 | 0 | 0 | 0 | 21 |
+| portscan | 7697 | 490 | 29 | 21 | 0 | 0 | 0 | 6240 | 0 | 0 | 917 |
+| bot | 736 | 692 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 44 |
+| ddos | 95145 | 0 | 0 | 5086 | 0 | 0 | 0 | 3264 | 0 | 79095 | 7700 |
+
+**Known-attack probe (held-out last 40% of Mon-Wed attacks), first block:**
+
+| true \ pred | n | benign | bruteforce | dos | heartbleed | web | infiltration | portscan | bot | ddos | unknown |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| benign | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| bruteforce | 2773 | 18 | 2754 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 |
+| dos | 3000 | 165 | 0 | 2683 | 0 | 0 | 0 | 0 | 0 | 0 | 152 |
+| heartbleed | 4 | 0 | 0 | 0 | 3 | 0 | 0 | 0 | 0 | 0 | 1 |
+| web | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| infiltration | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| portscan | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| bot | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| ddos | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+
+**Known-attack probe, last block:**
+
+| true \ pred | n | benign | bruteforce | dos | heartbleed | web | infiltration | portscan | bot | ddos | unknown |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| benign | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| bruteforce | 2773 | 18 | 2754 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 |
+| dos | 3001 | 166 | 0 | 2685 | 0 | 0 | 0 | 0 | 0 | 0 | 150 |
+| heartbleed | 4 | 0 | 0 | 0 | 3 | 0 | 0 | 0 | 0 | 0 | 1 |
+| web | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| infiltration | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| portscan | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| bot | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| ddos | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+
+### A1_B3_B100
+
+**Replay (Thu+Fri), true class x predicted, flows:**
+
+| true \ pred | n | benign | bruteforce | dos | heartbleed | web | infiltration | portscan | bot | ddos | unknown |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| benign | 500425 | 495704 | 22 | 55 | 0 | 0 | 0 | 192 | 0 | 0 | 4452 |
+| bruteforce | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| dos | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| heartbleed | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| web | 104 | 14 | 0 | 0 | 0 | 17 | 0 | 0 | 0 | 0 | 73 |
+| infiltration | 36 | 2 | 0 | 12 | 0 | 0 | 0 | 0 | 0 | 0 | 22 |
+| portscan | 7699 | 666 | 30 | 43 | 0 | 0 | 0 | 3604 | 0 | 0 | 3356 |
+| bot | 736 | 692 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 44 |
+| ddos | 95144 | 0 | 0 | 6424 | 0 | 0 | 0 | 14 | 0 | 79236 | 9470 |
+
+**Known-attack probe (held-out last 40% of Mon-Wed attacks), first block:**
+
+| true \ pred | n | benign | bruteforce | dos | heartbleed | web | infiltration | portscan | bot | ddos | unknown |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| benign | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| bruteforce | 2773 | 18 | 2754 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 |
+| dos | 3000 | 165 | 0 | 2683 | 0 | 0 | 0 | 0 | 0 | 0 | 152 |
+| heartbleed | 4 | 0 | 0 | 0 | 3 | 0 | 0 | 0 | 0 | 0 | 1 |
+| web | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| infiltration | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| portscan | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| bot | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| ddos | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+
+**Known-attack probe, last block:**
+
+| true \ pred | n | benign | bruteforce | dos | heartbleed | web | infiltration | portscan | bot | ddos | unknown |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| benign | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| bruteforce | 2773 | 18 | 2754 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 |
+| dos | 3000 | 174 | 0 | 2684 | 0 | 0 | 0 | 0 | 0 | 0 | 142 |
+| heartbleed | 4 | 0 | 0 | 0 | 3 | 0 | 0 | 0 | 0 | 0 | 1 |
+| web | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| infiltration | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| portscan | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| bot | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| ddos | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+
+### A1_B3_B500
+
+**Replay (Thu+Fri), true class x predicted, flows:**
+
+| true \ pred | n | benign | bruteforce | dos | heartbleed | web | infiltration | portscan | bot | ddos | unknown |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| benign | 500426 | 495754 | 23 | 51 | 0 | 3 | 0 | 325 | 0 | 0 | 4270 |
+| bruteforce | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| dos | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| heartbleed | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| web | 104 | 14 | 0 | 0 | 0 | 18 | 0 | 0 | 0 | 0 | 72 |
+| infiltration | 37 | 2 | 0 | 12 | 0 | 0 | 0 | 0 | 0 | 0 | 23 |
+| portscan | 7698 | 552 | 29 | 21 | 0 | 0 | 0 | 6228 | 0 | 0 | 868 |
+| bot | 736 | 692 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 44 |
+| ddos | 95142 | 0 | 0 | 5022 | 0 | 0 | 0 | 1354 | 0 | 79180 | 9586 |
+
+**Known-attack probe (held-out last 40% of Mon-Wed attacks), first block:**
+
+| true \ pred | n | benign | bruteforce | dos | heartbleed | web | infiltration | portscan | bot | ddos | unknown |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| benign | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| bruteforce | 2773 | 18 | 2754 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 |
+| dos | 3000 | 165 | 0 | 2683 | 0 | 0 | 0 | 0 | 0 | 0 | 152 |
+| heartbleed | 4 | 0 | 0 | 0 | 3 | 0 | 0 | 0 | 0 | 0 | 1 |
+| web | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| infiltration | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| portscan | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| bot | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| ddos | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+
+**Known-attack probe, last block:**
+
+| true \ pred | n | benign | bruteforce | dos | heartbleed | web | infiltration | portscan | bot | ddos | unknown |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| benign | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| bruteforce | 2773 | 18 | 2754 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 |
+| dos | 3000 | 176 | 0 | 2684 | 0 | 0 | 0 | 0 | 0 | 0 | 140 |
+| heartbleed | 4 | 0 | 0 | 0 | 3 | 0 | 0 | 0 | 0 | 0 | 1 |
+| web | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| infiltration | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| portscan | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| bot | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| ddos | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+
+### A1_B4_B100
+
+**Replay (Thu+Fri), true class x predicted, flows:**
+
+| true \ pred | n | benign | bruteforce | dos | heartbleed | web | infiltration | portscan | bot | ddos | unknown |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| benign | 500425 | 494323 | 2 | 12 | 0 | 0 | 0 | 14 | 0 | 0 | 6074 |
+| bruteforce | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| dos | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| heartbleed | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| web | 104 | 104 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| infiltration | 36 | 2 | 0 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 33 |
+| portscan | 7697 | 652 | 0 | 17 | 0 | 0 | 0 | 6002 | 0 | 0 | 1026 |
+| bot | 736 | 692 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 44 |
+| ddos | 95143 | 13574 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 66953 | 14616 |
+
+**Known-attack probe (held-out last 40% of Mon-Wed attacks), first block:**
+
+| true \ pred | n | benign | bruteforce | dos | heartbleed | web | infiltration | portscan | bot | ddos | unknown |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| benign | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| bruteforce | 2773 | 2770 | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| dos | 3000 | 2788 | 0 | 176 | 0 | 0 | 0 | 0 | 0 | 0 | 36 |
+| heartbleed | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 4 |
+| web | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| infiltration | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| portscan | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| bot | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| ddos | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+
+**Known-attack probe, last block:**
+
+| true \ pred | n | benign | bruteforce | dos | heartbleed | web | infiltration | portscan | bot | ddos | unknown |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| benign | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| bruteforce | 2773 | 2770 | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| dos | 3000 | 2752 | 0 | 194 | 0 | 0 | 0 | 0 | 0 | 0 | 54 |
+| heartbleed | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 4 |
+| web | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| infiltration | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| portscan | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| bot | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| ddos | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+
+### A1_B4_B500
+
+**Replay (Thu+Fri), true class x predicted, flows:**
+
+| true \ pred | n | benign | bruteforce | dos | heartbleed | web | infiltration | portscan | bot | ddos | unknown |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| benign | 500423 | 494356 | 2 | 12 | 0 | 0 | 0 | 15 | 0 | 0 | 6038 |
+| bruteforce | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| dos | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| heartbleed | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| web | 104 | 104 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| infiltration | 36 | 2 | 0 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 33 |
+| portscan | 7698 | 657 | 0 | 11 | 0 | 0 | 0 | 6090 | 0 | 0 | 940 |
+| bot | 736 | 692 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 44 |
+| ddos | 95143 | 11182 | 0 | 0 | 0 | 0 | 0 | 3117 | 0 | 69396 | 11448 |
+
+**Known-attack probe (held-out last 40% of Mon-Wed attacks), first block:**
+
+| true \ pred | n | benign | bruteforce | dos | heartbleed | web | infiltration | portscan | bot | ddos | unknown |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| benign | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| bruteforce | 2773 | 2770 | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| dos | 3000 | 2788 | 0 | 176 | 0 | 0 | 0 | 0 | 0 | 0 | 36 |
+| heartbleed | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 4 |
+| web | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| infiltration | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| portscan | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| bot | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| ddos | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+
+**Known-attack probe, last block:**
+
+| true \ pred | n | benign | bruteforce | dos | heartbleed | web | infiltration | portscan | bot | ddos | unknown |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| benign | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| bruteforce | 2773 | 2770 | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| dos | 2999 | 2730 | 0 | 202 | 0 | 0 | 0 | 0 | 0 | 0 | 67 |
+| heartbleed | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 4 |
+| web | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| infiltration | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| portscan | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| bot | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| ddos | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+
+### A3b_B1_B100_r1.0
+
+**Replay (Thu+Fri), true class x predicted, flows:**
+
+| true \ pred | n | benign | bruteforce | dos | heartbleed | web | infiltration | portscan | bot | ddos | unknown |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| benign | 500425 | 494399 | 4 | 8 | 0 | 0 | 0 | 2 | 0 | 0 | 6012 |
+| bruteforce | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| dos | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| heartbleed | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| web | 104 | 14 | 0 | 0 | 0 | 18 | 0 | 0 | 0 | 0 | 72 |
+| infiltration | 36 | 1 | 0 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 33 |
+| portscan | 7698 | 657 | 12 | 10 | 0 | 0 | 0 | 2514 | 0 | 0 | 4505 |
+| bot | 736 | 692 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 44 |
+| ddos | 95144 | 0 | 0 | 0 | 0 | 0 | 0 | 3266 | 0 | 78992 | 12886 |
+
+**Known-attack probe (held-out last 40% of Mon-Wed attacks), first block:**
+
+| true \ pred | n | benign | bruteforce | dos | heartbleed | web | infiltration | portscan | bot | ddos | unknown |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| benign | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| bruteforce | 2773 | 18 | 2752 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 3 |
+| dos | 3000 | 166 | 0 | 2672 | 0 | 0 | 0 | 0 | 0 | 0 | 162 |
+| heartbleed | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 4 |
+| web | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| infiltration | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| portscan | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| bot | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| ddos | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+
+**Known-attack probe, last block:**
+
+| true \ pred | n | benign | bruteforce | dos | heartbleed | web | infiltration | portscan | bot | ddos | unknown |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| benign | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| bruteforce | 2773 | 18 | 2752 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 3 |
+| dos | 3000 | 172 | 0 | 2672 | 0 | 0 | 0 | 0 | 0 | 0 | 156 |
+| heartbleed | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 4 |
+| web | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| infiltration | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| portscan | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| bot | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| ddos | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+
+### A3b_B1_B500_r1.0
+
+**Replay (Thu+Fri), true class x predicted, flows:**
+
+| true \ pred | n | benign | bruteforce | dos | heartbleed | web | infiltration | portscan | bot | ddos | unknown |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| benign | 500426 | 494511 | 5 | 6 | 0 | 0 | 3 | 3 | 0 | 0 | 5898 |
+| bruteforce | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| dos | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| heartbleed | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| web | 104 | 14 | 0 | 0 | 0 | 18 | 0 | 0 | 0 | 0 | 72 |
+| infiltration | 36 | 1 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 34 |
+| portscan | 7699 | 1017 | 12 | 10 | 0 | 0 | 0 | 2376 | 0 | 0 | 4284 |
+| bot | 736 | 692 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 44 |
+| ddos | 95144 | 0 | 0 | 0 | 0 | 0 | 0 | 3292 | 0 | 78996 | 12856 |
+
+**Known-attack probe (held-out last 40% of Mon-Wed attacks), first block:**
+
+| true \ pred | n | benign | bruteforce | dos | heartbleed | web | infiltration | portscan | bot | ddos | unknown |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| benign | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| bruteforce | 2773 | 18 | 2752 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 3 |
+| dos | 3000 | 166 | 0 | 2672 | 0 | 0 | 0 | 0 | 0 | 0 | 162 |
+| heartbleed | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 4 |
+| web | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| infiltration | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| portscan | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| bot | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| ddos | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+
+**Known-attack probe, last block:**
+
+| true \ pred | n | benign | bruteforce | dos | heartbleed | web | infiltration | portscan | bot | ddos | unknown |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| benign | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| bruteforce | 2773 | 18 | 2752 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 3 |
+| dos | 3000 | 162 | 0 | 2672 | 0 | 0 | 0 | 0 | 0 | 0 | 166 |
+| heartbleed | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 4 |
+| web | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| infiltration | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| portscan | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| bot | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| ddos | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+
+### A3b_B2_B100_r1.0
+
+**Replay (Thu+Fri), true class x predicted, flows:**
+
+| true \ pred | n | benign | bruteforce | dos | heartbleed | web | infiltration | portscan | bot | ddos | unknown |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| benign | 500426 | 494516 | 2 | 6 | 0 | 0 | 0 | 4 | 0 | 0 | 5898 |
+| bruteforce | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| dos | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| heartbleed | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| web | 104 | 14 | 0 | 0 | 0 | 18 | 0 | 0 | 0 | 0 | 72 |
+| infiltration | 36 | 1 | 0 | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 31 |
+| portscan | 7698 | 1022 | 16 | 10 | 0 | 0 | 0 | 2224 | 0 | 0 | 4426 |
+| bot | 736 | 692 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 44 |
+| ddos | 95144 | 0 | 0 | 0 | 0 | 0 | 0 | 3292 | 0 | 78906 | 12946 |
+
+**Known-attack probe (held-out last 40% of Mon-Wed attacks), first block:**
+
+| true \ pred | n | benign | bruteforce | dos | heartbleed | web | infiltration | portscan | bot | ddos | unknown |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| benign | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| bruteforce | 2773 | 18 | 2752 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 3 |
+| dos | 3000 | 166 | 0 | 2672 | 0 | 0 | 0 | 0 | 0 | 0 | 162 |
+| heartbleed | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 4 |
+| web | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| infiltration | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| portscan | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| bot | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| ddos | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+
+**Known-attack probe, last block:**
+
+| true \ pred | n | benign | bruteforce | dos | heartbleed | web | infiltration | portscan | bot | ddos | unknown |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| benign | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| bruteforce | 2773 | 18 | 2752 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 3 |
+| dos | 3000 | 155 | 0 | 2673 | 0 | 0 | 0 | 0 | 0 | 0 | 172 |
+| heartbleed | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 4 |
+| web | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| infiltration | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| portscan | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| bot | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| ddos | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+
+### A3b_B2_B500_r1.0
+
+**Replay (Thu+Fri), true class x predicted, flows:**
+
+| true \ pred | n | benign | bruteforce | dos | heartbleed | web | infiltration | portscan | bot | ddos | unknown |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| benign | 500425 | 495050 | 4 | 7 | 0 | 0 | 2 | 0 | 0 | 0 | 5362 |
+| bruteforce | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| dos | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| heartbleed | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| web | 104 | 14 | 0 | 0 | 0 | 18 | 0 | 0 | 0 | 0 | 72 |
+| infiltration | 35 | 1 | 0 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 32 |
+| portscan | 7699 | 980 | 16 | 10 | 0 | 0 | 0 | 2399 | 0 | 0 | 4294 |
+| bot | 736 | 692 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 44 |
+| ddos | 95145 | 0 | 0 | 0 | 0 | 0 | 0 | 3299 | 0 | 78992 | 12854 |
+
+**Known-attack probe (held-out last 40% of Mon-Wed attacks), first block:**
+
+| true \ pred | n | benign | bruteforce | dos | heartbleed | web | infiltration | portscan | bot | ddos | unknown |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| benign | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| bruteforce | 2773 | 18 | 2752 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 3 |
+| dos | 3000 | 166 | 0 | 2672 | 0 | 0 | 0 | 0 | 0 | 0 | 162 |
+| heartbleed | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 4 |
+| web | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| infiltration | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| portscan | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| bot | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| ddos | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+
+**Known-attack probe, last block:**
+
+| true \ pred | n | benign | bruteforce | dos | heartbleed | web | infiltration | portscan | bot | ddos | unknown |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| benign | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| bruteforce | 2773 | 18 | 2752 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 3 |
+| dos | 3000 | 162 | 0 | 2674 | 0 | 0 | 0 | 0 | 0 | 0 | 164 |
+| heartbleed | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 4 |
+| web | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| infiltration | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| portscan | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| bot | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| ddos | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+
+### A3b_B3_B100_r1.0
+
+**Replay (Thu+Fri), true class x predicted, flows:**
+
+| true \ pred | n | benign | bruteforce | dos | heartbleed | web | infiltration | portscan | bot | ddos | unknown |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| benign | 500425 | 495608 | 2 | 4 | 0 | 0 | 1 | 4 | 0 | 0 | 4806 |
+| bruteforce | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| dos | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| heartbleed | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| web | 104 | 14 | 0 | 0 | 0 | 18 | 0 | 0 | 0 | 0 | 72 |
+| infiltration | 36 | 2 | 0 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 32 |
+| portscan | 7699 | 1032 | 15 | 10 | 0 | 0 | 0 | 1984 | 0 | 0 | 4658 |
+| bot | 736 | 692 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 44 |
+| ddos | 95144 | 0 | 0 | 0 | 0 | 0 | 0 | 3276 | 0 | 78988 | 12880 |
+
+**Known-attack probe (held-out last 40% of Mon-Wed attacks), first block:**
+
+| true \ pred | n | benign | bruteforce | dos | heartbleed | web | infiltration | portscan | bot | ddos | unknown |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| benign | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| bruteforce | 2773 | 18 | 2752 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 3 |
+| dos | 3000 | 166 | 0 | 2672 | 0 | 0 | 0 | 0 | 0 | 0 | 162 |
+| heartbleed | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 4 |
+| web | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| infiltration | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| portscan | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| bot | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| ddos | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+
+**Known-attack probe, last block:**
+
+| true \ pred | n | benign | bruteforce | dos | heartbleed | web | infiltration | portscan | bot | ddos | unknown |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| benign | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| bruteforce | 2773 | 18 | 2752 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 3 |
+| dos | 3000 | 176 | 0 | 2672 | 0 | 0 | 0 | 0 | 0 | 0 | 152 |
+| heartbleed | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 4 |
+| web | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| infiltration | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| portscan | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| bot | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| ddos | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+
+### A3b_B3_B500_r1.0
+
+**Replay (Thu+Fri), true class x predicted, flows:**
+
+| true \ pred | n | benign | bruteforce | dos | heartbleed | web | infiltration | portscan | bot | ddos | unknown |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| benign | 500426 | 495710 | 4 | 4 | 0 | 0 | 2 | 0 | 0 | 0 | 4706 |
+| bruteforce | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| dos | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| heartbleed | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| web | 104 | 14 | 0 | 0 | 0 | 18 | 0 | 0 | 0 | 0 | 72 |
+| infiltration | 36 | 1 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 34 |
+| portscan | 7699 | 1244 | 17 | 10 | 0 | 0 | 0 | 1831 | 0 | 0 | 4597 |
+| bot | 736 | 692 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 44 |
+| ddos | 95144 | 0 | 0 | 0 | 0 | 0 | 0 | 3290 | 0 | 78998 | 12856 |
+
+**Known-attack probe (held-out last 40% of Mon-Wed attacks), first block:**
+
+| true \ pred | n | benign | bruteforce | dos | heartbleed | web | infiltration | portscan | bot | ddos | unknown |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| benign | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| bruteforce | 2773 | 18 | 2752 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 3 |
+| dos | 3000 | 166 | 0 | 2672 | 0 | 0 | 0 | 0 | 0 | 0 | 162 |
+| heartbleed | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 4 |
+| web | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| infiltration | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| portscan | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| bot | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| ddos | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+
+**Known-attack probe, last block:**
+
+| true \ pred | n | benign | bruteforce | dos | heartbleed | web | infiltration | portscan | bot | ddos | unknown |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| benign | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| bruteforce | 2773 | 18 | 2752 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 3 |
+| dos | 3000 | 176 | 0 | 2671 | 0 | 0 | 0 | 0 | 0 | 0 | 153 |
+| heartbleed | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 4 |
+| web | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| infiltration | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| portscan | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| bot | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| ddos | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+
+### A3b_B4_B100_r1.0
+
+**Replay (Thu+Fri), true class x predicted, flows:**
+
+| true \ pred | n | benign | bruteforce | dos | heartbleed | web | infiltration | portscan | bot | ddos | unknown |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| benign | 500425 | 494323 | 0 | 163 | 0 | 0 | 0 | 9 | 0 | 0 | 5930 |
+| bruteforce | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| dos | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| heartbleed | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| web | 104 | 104 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| infiltration | 36 | 2 | 0 | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 30 |
+| portscan | 7698 | 652 | 0 | 125 | 0 | 0 | 0 | 2671 | 0 | 0 | 4250 |
+| bot | 736 | 692 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 44 |
+| ddos | 95144 | 13574 | 0 | 0 | 0 | 0 | 0 | 3308 | 0 | 66678 | 11584 |
+
+**Known-attack probe (held-out last 40% of Mon-Wed attacks), first block:**
+
+| true \ pred | n | benign | bruteforce | dos | heartbleed | web | infiltration | portscan | bot | ddos | unknown |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| benign | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| bruteforce | 2773 | 2770 | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| dos | 3000 | 2788 | 0 | 157 | 0 | 0 | 0 | 0 | 0 | 0 | 55 |
+| heartbleed | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 4 |
+| web | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| infiltration | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| portscan | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| bot | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| ddos | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+
+**Known-attack probe, last block:**
+
+| true \ pred | n | benign | bruteforce | dos | heartbleed | web | infiltration | portscan | bot | ddos | unknown |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| benign | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| bruteforce | 2773 | 2770 | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| dos | 3000 | 2752 | 0 | 172 | 0 | 0 | 0 | 0 | 0 | 0 | 76 |
+| heartbleed | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 4 |
+| web | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| infiltration | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| portscan | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| bot | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| ddos | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+
+### A3b_B4_B500_r1.0
+
+**Replay (Thu+Fri), true class x predicted, flows:**
+
+| true \ pred | n | benign | bruteforce | dos | heartbleed | web | infiltration | portscan | bot | ddos | unknown |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| benign | 500424 | 494356 | 0 | 96 | 0 | 0 | 0 | 10 | 0 | 0 | 5962 |
+| bruteforce | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| dos | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| heartbleed | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| web | 104 | 104 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| infiltration | 36 | 2 | 0 | 1 | 0 | 0 | 1 | 0 | 0 | 0 | 32 |
+| portscan | 7697 | 657 | 0 | 76 | 0 | 0 | 0 | 2836 | 0 | 0 | 4128 |
+| bot | 736 | 692 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 44 |
+| ddos | 95143 | 11182 | 0 | 0 | 0 | 0 | 0 | 3296 | 0 | 69179 | 11486 |
+
+**Known-attack probe (held-out last 40% of Mon-Wed attacks), first block:**
+
+| true \ pred | n | benign | bruteforce | dos | heartbleed | web | infiltration | portscan | bot | ddos | unknown |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| benign | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| bruteforce | 2773 | 2770 | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| dos | 3000 | 2788 | 0 | 157 | 0 | 0 | 0 | 0 | 0 | 0 | 55 |
+| heartbleed | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 4 |
+| web | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| infiltration | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| portscan | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| bot | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| ddos | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+
+**Known-attack probe, last block:**
+
+| true \ pred | n | benign | bruteforce | dos | heartbleed | web | infiltration | portscan | bot | ddos | unknown |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| benign | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| bruteforce | 2773 | 2770 | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| dos | 2999 | 2730 | 0 | 178 | 0 | 0 | 0 | 0 | 0 | 0 | 91 |
+| heartbleed | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 4 |
 | web | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | infiltration | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | portscan | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
